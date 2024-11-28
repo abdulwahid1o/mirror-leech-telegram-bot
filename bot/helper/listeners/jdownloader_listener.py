@@ -1,7 +1,7 @@
-from asyncio import sleep, wait_for
+from asyncio import sleep
 
-from bot import intervals, jd_lock, jd_downloads, LOGGER
-from ..ext_utils.bot_utils import new_task, retry_function
+from bot import intervals, jd_lock, jd_downloads
+from ..ext_utils.bot_utils import new_task
 from ..ext_utils.jdownloader_booter import jdownloader
 from ..ext_utils.status_utils import get_task_by_gid
 
@@ -10,9 +10,8 @@ from ..ext_utils.status_utils import get_task_by_gid
 async def remove_download(gid):
     if intervals["stopAll"]:
         return
-    await retry_function(
-        jdownloader.device.downloads.remove_links,
-        package_ids=[gid],
+    await jdownloader.device.downloads.remove_links(
+        package_ids=jd_downloads[gid]["ids"]
     )
     if task := await get_task_by_gid(gid):
         await task.listener.on_download_error("Download removed manually!")
@@ -25,8 +24,7 @@ async def _on_download_complete(gid):
     if task := await get_task_by_gid(gid):
         if task.listener.select:
             async with jd_lock:
-                await retry_function(
-                    jdownloader.device.downloads.cleanup,
+                await jdownloader.device.downloads.cleanup(
                     "DELETE_DISABLED",
                     "REMOVE_LINKS_AND_DELETE_FILES",
                     "SELECTED",
@@ -37,8 +35,7 @@ async def _on_download_complete(gid):
             return
         async with jd_lock:
             if gid in jd_downloads:
-                await retry_function(
-                    jdownloader.device.downloads.remove_links,
+                await jdownloader.device.downloads.remove_links(
                     package_ids=jd_downloads[gid]["ids"],
                 )
                 del jd_downloads[gid]
@@ -53,17 +50,13 @@ async def _jd_listener():
                 intervals["jd"] = ""
                 break
             try:
-                await jdownloader.check_jdownloader_state()
-            except:
-                continue
-            try:
                 packages = await jdownloader.device.downloads.query_packages(
                     [{"finished": True, "saveTo": True}]
                 )
             except:
                 continue
 
-            all_packages = [pack["uuid"] for pack in packages]
+            all_packages = {pack["uuid"]: pack for pack in packages}
             for d_gid, d_dict in list(jd_downloads.items()):
                 if d_dict["status"] == "down":
                     for index, pid in enumerate(d_dict["ids"]):
@@ -72,9 +65,9 @@ async def _jd_listener():
                     if len(jd_downloads[d_gid]["ids"]) == 0:
                         path = jd_downloads[d_gid]["path"]
                         jd_downloads[d_gid]["ids"] = [
-                            dl["uuid"]
-                            for dl in all_packages
-                            if dl["saveTo"].startswith(path)
+                            uid
+                            for uid, pk in all_packages.items()
+                            if pk["saveTo"].startswith(path)
                         ]
                     if len(jd_downloads[d_gid]["ids"]) == 0:
                         await remove_download(d_gid)
